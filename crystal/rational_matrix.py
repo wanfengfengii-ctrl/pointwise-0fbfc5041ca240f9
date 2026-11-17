@@ -34,3 +34,10 @@ def add3(a, b):
 
 def subtract3(a, b):
     return tuple(a[i] - b[i] for i in range(3))
+
+
+def matmul3(a, b):
+    return tuple(tuple(sum((a[i][k] * b[k][j] for k in range(3)),
+                          Fraction(0))
+                      for j in range(3))
+                 for i in range(3))

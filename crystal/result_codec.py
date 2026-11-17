@@ -8,6 +8,8 @@ from .bond_geometry import BondGeometry
 
 RESULT_FORMAT_VERSION = 1
 CALCULATION = "primitive-v1"
+SUPERCELL_CALCULATION = "supercell-v1"
+SUPPORTED_CALCULATIONS = (CALCULATION, SUPERCELL_CALCULATION)
 
 
 def source_to_mapping(source):
@@ -18,17 +20,19 @@ def source_to_mapping(source):
         raise ValueError("invalid source binding")
     if any(c not in "0123456789abcdef" for c in digest):
         raise ValueError("invalid source digest")
-    if calculation != CALCULATION:
+    if calculation not in SUPPORTED_CALCULATIONS:
         raise ValueError("unsupported calculation")
     return {"product_id": product, "revision": revision,
             "digest": digest, "calculation": calculation}
 
 
-def read_source(value):
+def read_source(value, calculation=CALCULATION):
     exact_keys(value, ("product_id", "revision", "digest", "calculation"))
     source = tuple(value[k] for k in
                    ("product_id", "revision", "digest", "calculation"))
     source_to_mapping(source)
+    if source[3] != calculation:
+        raise ValueError("unexpected calculation")
     return source
 
 

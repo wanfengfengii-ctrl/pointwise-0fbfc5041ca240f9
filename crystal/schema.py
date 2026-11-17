@@ -1,4 +1,5 @@
 SCHEMA_VERSION = 1
+CALCULATION_CHECK = "calculation IN ('primitive-v1', 'supercell-v1')"
 
 TABLES = (
     """CREATE TABLE IF NOT EXISTS products (
@@ -19,7 +20,7 @@ TABLES = (
         product_id TEXT NOT NULL,
         revision INTEGER NOT NULL,
         digest TEXT NOT NULL,
-        calculation TEXT NOT NULL CHECK(calculation = 'primitive-v1'),
+        calculation TEXT NOT NULL CHECK(""" + CALCULATION_CHECK + """),
         FOREIGN KEY(product_id,revision)
             REFERENCES revisions(product_id,revision))""",
     """CREATE TABLE IF NOT EXISTS results (
@@ -44,8 +45,60 @@ def check_schema_version(connection):
     return version
 
 
+def _tasks_table_sql(connection):
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'"
+    ).fetchone()
+    return None if row is None else row[0]
+
+
+def _migrate_tasks_calculation(connection):
+    """Widen the persisted calculation CHECK without changing any row.
+
+    V1 databases only accept primitive-v1 in ``tasks``.  The table is rebuilt
+    with the same columns, same identifiers and the same foreign key, while
+    foreign key enforcement is suspended (SQLite would otherwise refuse to drop
+    a referenced table).  The rebuild is atomic and keeps task ids, the
+    AUTOINCREMENT sequence, result rows and bodies identical.
+    """
+    connection.execute("PRAGMA foreign_keys=OFF")
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                """CREATE TABLE tasks_new (
+                    task_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    product_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL,
+                    digest TEXT NOT NULL,
+                    calculation TEXT NOT NULL CHECK("""
+                + CALCULATION_CHECK + """),
+                    FOREIGN KEY(product_id,revision)
+                        REFERENCES revisions(product_id,revision))""")
+            connection.execute(
+                "INSERT INTO tasks_new(task_id,product_id,revision,digest,"
+                "calculation) SELECT task_id,product_id,revision,digest,"
+                "calculation FROM tasks")
+            connection.execute("DROP TABLE tasks")
+            connection.execute("ALTER TABLE tasks_new RENAME TO tasks")
+            connection.execute("COMMIT")
+        except BaseException:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+    finally:
+        connection.execute("PRAGMA foreign_keys=ON")
+
+
+def _needs_calculation_migration(connection):
+    sql = _tasks_table_sql(connection)
+    return sql is not None and "supercell-v1" not in sql
+
+
 def initialize_schema(connection):
     check_schema_version(connection)
+    if _needs_calculation_migration(connection):
+        _migrate_tasks_calculation(connection)
     connection.execute("BEGIN IMMEDIATE")
     try:
         for statement in TABLES:
